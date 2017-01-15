@@ -6,25 +6,21 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.le.BluetoothLeScanner;
-import android.bluetooth.le.ScanCallback;
-import android.bluetooth.le.ScanResult;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.location.LocationManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 
-import android.renderscript.Byte2;
+
+import android.provider.Settings;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
-import android.util.Log;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import org.apache.commons.lang3.ArrayUtils;
 
 
 public class MainActivity extends Activity {
@@ -34,6 +30,18 @@ public class MainActivity extends Activity {
     private TextView ble;
 
     private final int MY_PERMISSIONS_REQUEST_ACCESS_COARSE_LOCATION = 123;
+
+    static final char[] hexArray = "0123456789ABCDEF".toCharArray();
+
+    private static String bytesToHex(byte[] bytes) {
+        char[] hexChars = new char[bytes.length * 2];
+        for (int j = 0; j < bytes.length; j++) {
+            int v = bytes[j] & 0xFF;
+            hexChars[j * 2] = hexArray[v >>> 4];
+            hexChars[j * 2 + 1] = hexArray[v & 0x0F];
+        }
+        return new String(hexChars);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -55,8 +63,16 @@ public class MainActivity extends Activity {
         final BluetoothManager bluetoothManager = (BluetoothManager)getSystemService(Context.BLUETOOTH_SERVICE);
         mBluetoothAdapter = bluetoothManager.getAdapter();
 //        mBluetoothLeScanner = mBluetoothAdapter.getBluetoothLeScanner();
+        mBluetoothAdapter.enable();
 
+        LocationManager locationManager = (LocationManager)getSystemService(Context.LOCATION_SERVICE);
+        boolean gps = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+        boolean network = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
 
+        if (!gps && !network) {
+            Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+            startActivityForResult(intent,1);
+        }
         if(mBluetoothAdapter == null || !mBluetoothAdapter.isEnabled()){
             Toast.makeText(this,"please open the bluetooth function",Toast.LENGTH_SHORT).show();
             Intent btIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
@@ -67,15 +83,21 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        // Inflate the menu; this adds items to the action bar if it is present.
-        getMenuInflater().inflate(R.menu.menu_main, menu);
-        return true;
+    protected void onResume() {
+        super.onResume();
+        // Initializes list view adapter.
+        scanLeDevice(true);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        scanLeDevice(false);
     }
 
     /*
-       校验蓝牙权限
-      */
+           校验蓝牙权限
+          */
     private void checkBluetoothPermission() {
         if (Build.VERSION.SDK_INT >= 23) {
             //校验是否已具有模糊定位权限
@@ -85,11 +107,13 @@ public class MainActivity extends Activity {
                         new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
                         MY_PERMISSIONS_REQUEST_ACCESS_COARSE_LOCATION);
             } else {
+                mBluetoothAdapter.startLeScan(mLeScanCallback);
                 //具有权限
 //                connectBluetooth();
-                scanLeDevice(true);
+//                scanLeDevice(true);
             }
         } else {
+            mBluetoothAdapter.startLeScan(mLeScanCallback);
             //系统不高于6.0直接执行
 //            connectBluetooth();
         }
@@ -118,20 +142,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
-        int id = item.getItemId();
-
-        //noinspection SimplifiableIfStatement
-        if (id == R.id.action_settings) {
-            return true;
-        }
-
-        return super.onOptionsItemSelected(item);
-    }
 
 
     private void scanLeDevice(final boolean enable){
@@ -146,14 +156,14 @@ public class MainActivity extends Activity {
 
 
 
-    private ScanCallback mScanCallback = new ScanCallback() {
-        @Override
-        public void onScanResult(int callbackType, ScanResult result) {
-            super.onScanResult(callbackType, result);
-            Log.i("StartScan","BLE Record>>>>>>>"+result.getDevice().toString());
-            result.getDevice().getUuids();
-        }
-    };
+//    private ScanCallback mScanCallback = new ScanCallback() {
+//        @Override
+//        public void onScanResult(int callbackType, ScanResult result) {
+//            super.onScanResult(callbackType, result);
+//            Log.i("StartScan","BLE Record>>>>>>>"+result.getDevice().toString());
+//            result.getDevice().getUuids();
+//        }
+//    };
 
     // Device scan callback.
     private BluetoothAdapter.LeScanCallback mLeScanCallback = new BluetoothAdapter.LeScanCallback(){
@@ -162,18 +172,10 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    ArrayUtils.reverse(bytes);// 数组反转
-                    // 将Byte数组的数据以十六进制表示并拼接成字符串
-                    StringBuffer str = new StringBuffer();
-                    int j = 0;
-                    for (byte b : bytes) {
-                        j = (b & 0xff);
-                        str.append(Integer.toHexString(j));
-                    }
-                    String struuid = str.toString();
-//                    String struuid = bytes2HexString(bytes).replace("-", "").toLowerCase();
-                    Log.i("搜索蓝牙设备信息", "device=" + bluetoothDevice.getName() + ";rssi=" + i + ";scanRecord=" + struuid);
-                    ble.setText("device=" + bluetoothDevice.getName() + ";rssi=" + i + ";scanRecord=" + struuid);
+                    String hexString = bytesToHex(bytes);
+                    String UUID = hexString.substring(18,18+32);
+//                    Toast.makeText(this,"UUID and RSS>>>>",Toast.LENGTH_SHORT).show();
+                    ble.setText("device=" + bluetoothDevice.getName() + ";rssi=" + i + ";scanRecord=" + UUID);
                 }
             });
 
